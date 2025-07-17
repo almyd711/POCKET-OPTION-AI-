@@ -10,20 +10,20 @@ TOKEN = "8107272693:AAFp2TOAvUunTaPPiSXHgFSVqrSuIJ5Gc4U"
 # ✅ الأزواج المتاحة
 PAIRS = ["EUR/USD OTC", "GBP/USD OTC", "USD/JPY OTC"]
 
-# ✅ محاكاة بيانات السوق (بما أنك على الهاتف بدون API حقيقي)
+# ✅ محاكاة بيانات السوق
 def get_market_data():
     ema20 = round(random.uniform(1.080, 1.090), 4)
     ema50 = round(random.uniform(1.078, 1.088), 4)
     rsi = round(random.uniform(30, 70), 2)
-    price = round(random.uniform(ema50 - 0.001, ema20 + 0.001), 4)
     bollinger_position = random.choice(["فوق الحد العلوي", "عند الحد الأوسط", "أسفل الحد السفلي"])
     direction = "صاعد ✅" if ema20 > ema50 else "هابط 🔻"
     recommendation = "شراء (CALL)" if ema20 > ema50 and rsi < 70 else "بيع (PUT)"
-    return ema20, ema50, rsi, bollinger_position, direction, recommendation, price
+    arrow = "⬆️" if "شراء" in recommendation else "⬇️"
+    return ema20, ema50, rsi, bollinger_position, direction, recommendation, arrow
 
 # ✅ توليد رسالة التوصية
 def generate_signal(pair):
-    ema20, ema50, rsi, boll_pos, trend, reco, price = get_market_data()
+    ema20, ema50, rsi, boll_pos, trend, reco, arrow = get_market_data()
     now = datetime.now().strftime("%I:%M %p")
     message = f"""📊 التوصية: {reco}
 💱 الـزوج: [{pair}] 
@@ -42,7 +42,7 @@ def generate_signal(pair):
 - EMA20 {'>' if ema20 > ema50 else '<'} EMA50 → {"صعود" if ema20 > ema50 else "هبوط"}
 - RSI {"< 70" if rsi < 70 else "> 70"} → {"غير مشبع" if rsi < 70 else "تشبّع شرائي"}
 - Bollinger → يعطي احتمالات الانعكاس
-
+🤔: {arrow}
 ⏱️ الفريم: 1 دقيقة
 ⏰ التوقيت: {now}
 """
