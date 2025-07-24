@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: telegram-trading-bot
+    env: python
+    buildCommand: ""
+    startCommand: python main.py
