@@ -1,79 +1,60 @@
+
 import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
-from datetime import datetime
-import random
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# ✅ توكن البوت
 TOKEN = "8107272693:AAFp2TOAvUunTaPPiSXHgFSVqrSuIJ5Gc4U"
+DEVELOPER_ID = 6964741705
 
-# ✅ الأزواج المتاحة
-PAIRS = ["EUR/USD OTC", "GBP/USD OTC", "USD/JPY OTC"]
+approved_users = set()
+pending_users = {}
 
-# ✅ محاكاة بيانات السوق
-def get_market_data():
-    ema20 = round(random.uniform(1.080, 1.090), 4)
-    ema50 = round(random.uniform(1.078, 1.088), 4)
-    rsi = round(random.uniform(30, 70), 2)
-    bollinger_position = random.choice(["فوق الحد العلوي", "عند الحد الأوسط", "أسفل الحد السفلي"])
-    direction = "صاعد ✅" if ema20 > ema50 else "هابط 🔻"
-    recommendation = "شراء (CALL)" if ema20 > ema50 and rsi < 70 else "بيع (PUT)"
-    arrow = "⬆️" if "شراء" in recommendation else "⬇️"
-    return ema20, ema50, rsi, bollinger_position, direction, recommendation, arrow
+PAYMENT_INFO = """
+🔒 *الدخول مدفوع - 5 دولار فقط*
 
-# ✅ توليد رسالة التوصية
-def generate_signal(pair):
-    ema20, ema50, rsi, boll_pos, trend, reco, arrow = get_market_data()
-    now = datetime.now().strftime("%I:%M %p")
-    message = f"""📊 التوصية: {reco}
-💱 الـزوج: [{pair}] 
-🔍 التحليل:
-🔹 EMA:
-- EMA20 = {ema20}
-- EMA50 = {ema50}
-📈 الاتجاه: {trend}
+💸 *طرق الدفع:*
+1️⃣ USDT (BEP20): `0x3a5db3aec7c262017af9423219eb64b5eb6643d7`
+2️⃣ USDT (TRC20): `THrV9BLydZTYKox1MnnAivqitHBEz3xKiq`
+3️⃣ Payeer: `P1113622813`
 
-🔸 RSI = {rsi}
-{"✅ منطقة تداول طبيعية" if 30 < rsi < 70 else "⚠️ تشبع سوقي"}
-
-🔻 Bollinger Bands: {boll_pos}
-
-📚 شرح المؤشرات:
-- EMA20 {'>' if ema20 > ema50 else '<'} EMA50 → {"صعود" if ema20 > ema50 else "هبوط"}
-- RSI {"< 70" if rsi < 70 else "> 70"} → {"غير مشبع" if rsi < 70 else "تشبّع شرائي"}
-- Bollinger → يعطي احتمالات الانعكاس
-🤔: {arrow}
-⏱️ الفريم: 1 دقيقة
-⏰ التوقيت: {now}
+📸 بعد الدفع، أرسل لقطة الشاشة هنا وسيتم مراجعتها من المطور.
 """
-    return message
 
-# ✅ بدء البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[pair] for pair in PAIRS]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("اختر الزوج الذي تريد التوصيات عليه:", reply_markup=reply_markup)
-
-# ✅ إرسال التوصية عند اختيار الزوج
-async def handle_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pair = update.message.text.strip()
-    if pair in PAIRS:
-        signal = generate_signal(pair)
-        await update.message.reply_text(signal)
+    user_id = update.effective_user.id
+    if user_id in approved_users:
+        await context.bot.send_message(chat_id=user_id, text="✅ تم التفعيل! ستصلك التوصيات قريبًا.")
+        # هنا ترسل التوصيات لاحقًا
+    elif user_id in pending_users:
+        await context.bot.send_message(chat_id=user_id, text="⏳ تم استلام طلبك، يرجى الانتظار للمراجعة.")
     else:
-        await update.message.reply_text("❌ الزوج غير معروف. الرجاء اختيار زوج من القائمة.")
+        pending_users[user_id] = update.effective_user.username
+        await context.bot.send_message(chat_id=user_id, text=PAYMENT_INFO, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=DEVELOPER_ID,
+            text=f"📥 طلب دخول جديد من: @{update.effective_user.username} ({user_id})",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
+                 InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")]
+            ])
+        )
 
-# ✅ إعداد البوت
-def main():
-    logging.basicConfig(level=logging.INFO)
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("accept_"):
+        user_id = int(data.split("_")[1])
+        approved_users.add(user_id)
+        await context.bot.send_message(chat_id=user_id, text="✅ تم قبولك! يمكنك الآن استخدام البوت.")
+        await query.edit_message_text("✅ تم قبول المستخدم.")
+    elif data.startswith("reject_"):
+        user_id = int(data.split("_")[1])
+        if user_id in pending_users:
+            await context.bot.send_message(chat_id=user_id, text="❌ تم رفض طلبك. إذا كنت تعتقد أن هناك خطأ، تواصل مع المطور.")
+        await query.edit_message_text("❌ تم رفض المستخدم.")
+
+if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_pair))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
-lling()
-
-if __name__ == "__main__":
-    main()
