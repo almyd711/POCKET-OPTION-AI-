@@ -1,72 +1,61 @@
-
 import logging
 import requests
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+import pytz
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes
 )
 
-# ✅ التوكن والمعرف
 TOKEN = "8107272693:AAFp2TOAvUunTaPPiSXHgFSVqrSuIJ5Gc4U"
-DEVELOPER_ID = 6964741705
 API_KEY = "W88S5OTAQIAE42AX"
+DEVELOPER_ID = 6964741705
 
-# 🟢 بيانات الدفع
 PAYMENT_INFO = """
-🔒 *البوت مدفوع - الاشتراك 5 دولار فقط*
+🔒 *البوت مدفوع: عليك الدفع 5 دولار للاشتراك*
 
-💸 *طرق الدفع:*
-1️⃣ USDT (BEP20): `0x3a5db3aec7c262017af9423219eb64b5eb6643d7`
-2️⃣ USDT (TRC20): `THrV9BLydZTYKox1MnnAivqitHBEz3xKiq`
-3️⃣ Payeer: `P1113622813`
+💸 *وسائل الدفع:*
+1️⃣ USDT - شبكة BEP20  
+📥 العنوان: `0x3a5db3aec7c262017af9423219eb64b5eb6643d7`
 
-📸 بعد الدفع، أرسل لقطة الشاشة هنا وسيتم مراجعتها من المطور.
+2️⃣ USDT - شبكة TRC20  
+📥 العنوان: `THrV9BLydZTYKox1MnnAivqitHBEz3xKiq`
+
+3️⃣ Payeer  
+📥 المعرف: `P1113622813`
+
+📷 بعد الدفع، أرسل لقطة شاشة للتحقق.
+
+🕘 التفعيل يتم يدويًا خلال دقائق.
 """
 
-# 🗂️ إدارة المستخدمين
-approved_users = set()
-pending_users = {}
-
-# 📊 أزواج العملات المرتبطة بـ Alpha Vantage
 symbol_mapping = {
-    "EUR/USD OTC": "EUR/USD",
-    "EUR/JPY OTC": "EUR/JPY",
-    "EUR/RUB OTC": "EUR/RUB",
-    "EUR/TRY OTC": "EUR/TRY",
-    "EUR/CHF OTC": "EUR/CHF",
-    "EUR/HUF OTC": "EUR/HUF"
+    "USD/CHF": ("USD", "CHF"),
+    "AUD/USD": ("AUD", "USD"),
+    "USD/JPY": ("USD", "JPY"),
+    "USD/CAD": ("USD", "CAD"),
+    "EUR/JPY": ("EUR", "JPY"),
+    "EUR/CAD": ("EUR", "CAD"),
+    "EUR/USD": ("EUR", "USD"),
+    "EUR/CHF": ("EUR", "CHF"),
+    "EUR/AUD": ("EUR", "AUD"),
 }
 
-# 🧠 الحسابات الفنية
-def get_market_data(symbol):
-    fx_symbol = symbol.replace("/", "")
-    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[4:7]}&interval=1min&apikey={API_KEY}&outputsize=compact"
-    r = requests.get(url)
-    data = r.json()
-    try:
-        prices = list(data['Time Series FX (1min)'].items())
-        closes = [float(v['4. close']) for k, v in prices]
-        ema20 = sum(closes[:20]) / 20
-        ema50 = sum(closes[:50]) / 50
-        rsi = calculate_rsi(closes)
-        boll = bollinger_position(closes)
-        return ema20, ema50, rsi, boll
-    except Exception as e:
-        return None, None, None, f"خطأ: {e}"
+approved_users = set()
+pending_users = dict()
 
 def calculate_rsi(closes):
     gains = []
     losses = []
     for i in range(1, 15):
-        diff = closes[i - 1] - closes[i]
+        diff = closes[i-1] - closes[i]
         if diff > 0:
             gains.append(diff)
         else:
             losses.append(abs(diff))
-    avg_gain = sum(gains) / 14 if gains else 0.01
-    avg_loss = sum(losses) / 14 if losses else 0.01
+    avg_gain = sum(gains)/14 if gains else 0.01
+    avg_loss = sum(losses)/14 if losses else 0.01
     rs = avg_gain / avg_loss
     return round(100 - (100 / (1 + rs)), 2)
 
@@ -81,10 +70,31 @@ def bollinger_position(closes):
     else:
         return "داخل النطاق"
 
+def get_market_data(from_symbol, to_symbol):
+    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_symbol}&to_symbol={to_symbol}&interval=1min&apikey={API_KEY}&outputsize=compact"
+    r = requests.get(url)
+    data = r.json()
+    if 'Time Series FX (1min)' not in data:
+        return None, None, None, None
+    try:
+        prices = list(data['Time Series FX (1min)'].values())
+        closes = [float(p['4. close']) for p in prices]
+        ema20 = sum(closes[:20]) / 20
+        ema50 = sum(closes[:50]) / 50
+        rsi = calculate_rsi(closes)
+        boll = bollinger_position(closes)
+        return ema20, ema50, rsi, boll
+    except Exception as e:
+        logging.error(f"Error processing market data: {e}")
+        return None, None, None, None
+
 def format_analysis(symbol, ema20, ema50, rsi, boll):
     direction = "صاعد ✅" if ema20 > ema50 else "هابط ❌"
     decision = "شراء (CALL)" if ema20 > ema50 else "بيع (PUT)"
-    now = datetime.now().strftime("%I:%M %p")
+
+    tz = pytz.timezone('Asia/Riyadh')
+    now = datetime.now(tz).strftime("%I:%M %p")
+
     return f"""
 📊 التوصية: {decision}
 💱 الزوج: {symbol}
@@ -100,87 +110,122 @@ def format_analysis(symbol, ema20, ema50, rsi, boll):
 🔻 Bollinger Bands: {boll}
 
 📚 شرح المؤشرات:
-- EMA20 {'>' if ema20 > ema50 else '<'} EMA50 → {"صعود" if ema20 > ema50 else "هبوط"}
+- EMA20 {'>' if ema20 > ema50 else '<'} EMA50 → {'صعود' if ema20 > ema50 else 'هبوط'}
 - RSI < 70 → غير مشبع
 - Bollinger → يعطي احتمالات الانعكاس
 
+🤔: ⬆️⬇️ حسب التوصيه 
 ⏱️ الفريم: 1 دقيقة
-⏰ التوقيت: {now}
+⏰ التوقيت: {now} حسب التوقيت مكة المكرمة
 """
 
-# ✅ بدء البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in approved_users:
+    username = update.effective_user.username or "لايوجد اسم"
+    if user_id == DEVELOPER_ID:
+        keyboard = [
+            [InlineKeyboardButton("📥 عرض الطلبات", callback_data="show_requests")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(f"أهلاً بك مطور البوت، يمكنك إدارة الطلبات.", reply_markup=reply_markup)
+    elif user_id in approved_users:
         await send_pairs_panel(update, context)
     elif user_id in pending_users:
         await context.bot.send_message(chat_id=user_id, text="⏳ طلبك قيد المراجعة من المطور.")
     else:
-        pending_users[user_id] = update.effective_user.username
+        pending_users[user_id] = {"username": username, "photo_file_id": None}
         await context.bot.send_message(chat_id=user_id, text=PAYMENT_INFO, parse_mode="Markdown")
 
-# 🧾 إرسال صورة الدفع
+async def send_pairs_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton(sym, callback_data=f"pair_{sym}") for sym in list(symbol_mapping.keys())[i:i+3]]
+        for i in range(0, len(symbol_mapping), 3)
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("💱 اختر زوج الفوركس لتحصل على توصية:", reply_markup=reply_markup)
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in approved_users:
         return
     if user.id not in pending_users:
-        await update.message.reply_text("❗ أرسل أولاً /start لبدء الاشتراك.")
+        await update.message.reply_text("❗ أرسل /start أولاً لبدء الاشتراك.")
         return
-    caption = f"📥 إثبات دفع من: @{user.username} ({user.id})"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user.id}"),
-         InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user.id}")]
-    ])
-    await context.bot.send_photo(chat_id=DEVELOPER_ID, photo=update.message.photo[-1].file_id, caption=caption, reply_markup=keyboard)
 
-# 🔘 أزرار الأزواج
-async def send_pairs_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in approved_users:
-        await update.message.reply_text("❌ هذا البوت خاص بالمشتركين فقط.")
-        return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("EUR/USD OTC", callback_data="pair_EUR/USD OTC"),
-         InlineKeyboardButton("EUR/JPY OTC", callback_data="pair_EUR/JPY OTC")],
-        [InlineKeyboardButton("EUR/RUB OTC", callback_data="pair_EUR/RUB OTC"),
-         InlineKeyboardButton("EUR/TRY OTC", callback_data="pair_EUR/TRY OTC")],
-        [InlineKeyboardButton("EUR/HUF OTC", callback_data="pair_EUR/HUF OTC"),
-         InlineKeyboardButton("EUR/CHF OTC", callback_data="pair_EUR/CHF OTC")]
-    ])
-    await context.bot.send_message(chat_id=user_id, text="💱 اختر الزوج الذي تريد الحصول على توصية له:", reply_markup=keyboard)
+    pending_users[user.id]["photo_file_id"] = update.message.photo[-1].file_id
 
-# ⌨️ الرد على الضغط على الأزواج أو القبول
+    caption = f"📥 إثبات دفع من: @{pending_users[user.id]['username']} ({user.id})"
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user.id}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user.id}")
+        ]
+    ])
+    await context.bot.send_photo(chat_id=DEVELOPER_ID, photo=pending_users[user.id]["photo_file_id"], caption=caption, reply_markup=keyboard)
+    await update.message.reply_text("✅ تم إرسال إثبات الدفع للمراجعة. انتظر التفعيل.")
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
 
-    if data.startswith("accept_"):
-        user_id = int(data.split("_")[1])
-        approved_users.add(user_id)
-        await context.bot.send_message(chat_id=user_id, text="✅ تم قبولك! يمكنك الآن استخدام البوت.")
+    if data == "show_requests" and user_id == DEVELOPER_ID:
+        if not pending_users:
+            await query.message.reply_text("لا توجد طلبات حالياً.")
+            return
+        keyboard = []
+        for uid, info in pending_users.items():
+            username = info.get("username", "لايوجد اسم")
+            keyboard.append([InlineKeyboardButton(f"{username} ({uid})", callback_data=f"show_request_{uid}")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("📋 قائمة الطلبات المعلقة:", reply_markup=reply_markup)
+
+    elif data.startswith("show_request_") and user_id == DEVELOPER_ID:
+        requested_user_id = int(data.split("_")[-1])
+        info = pending_users.get(requested_user_id)
+        if not info or not info.get("photo_file_id"):
+            await query.message.reply_text("لا يوجد إثبات دفع لهذا المستخدم.")
+            return
+        caption = f"طلب من @{info['username']} ({requested_user_id})"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ قبول", callback_data=f"accept_{requested_user_id}"),
+                InlineKeyboardButton("❌ رفض", callback_data=f"reject_{requested_user_id}")
+            ]
+        ])
+        await context.bot.send_photo(chat_id=DEVELOPER_ID, photo=info["photo_file_id"], caption=caption, reply_markup=keyboard)
+
+    elif data.startswith("accept_") and user_id == DEVELOPER_ID:
+        uid = int(data.split("_")[1])
+        approved_users.add(uid)
+        pending_users.pop(uid, None)
+        await context.bot.send_message(chat_id=uid, text="✅ تم قبولك! يمكنك الآن استخدام البوت.")
         await query.edit_message_text("✅ تم قبول المستخدم.")
-    elif data.startswith("reject_"):
-        user_id = int(data.split("_")[1])
-        await context.bot.send_message(chat_id=user_id, text="❌ تم رفض طلبك.")
+
+    elif data.startswith("reject_") and user_id == DEVELOPER_ID:
+        uid = int(data.split("_")[1])
+        pending_users.pop(uid, None)
+        await context.bot.send_message(chat_id=uid, text="❌ تم رفض طلبك.")
         await query.edit_message_text("❌ تم رفض المستخدم.")
+
     elif data.startswith("pair_"):
         symbol = data.replace("pair_", "")
-        api_symbol = symbol_mapping.get(symbol, "EUR/USD")
-        ema20, ema50, rsi, boll = get_market_data(api_symbol)
-        if ema20:
+        from_sym, to_sym = symbol_mapping.get(symbol, ("EUR", "USD"))
+        ema20, ema50, rsi, boll = get_market_data(from_sym, to_sym)
+        if ema20 is not None:
             msg = format_analysis(symbol, ema20, ema50, rsi, boll)
         else:
             msg = f"❌ تعذر جلب بيانات الزوج {symbol} حالياً."
-        await context.bot.send_message(chat_id=update.effective_user.id, text=msg)
+        await query.edit_message_text(msg)
 
-# 🚀 تشغيل التطبيق
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("panel", send_pairs_panel))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_callback))
+
     app.run_polling()
