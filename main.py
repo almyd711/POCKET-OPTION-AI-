@@ -27,6 +27,10 @@ PAIRS = {
 # ✅ إعداد السجل
 logging.basicConfig(level=logging.INFO)
 
+# ✅ التحقق من الاشتراك
+def is_subscribed(user_id):
+    return str(user_id) == str(ADMIN_ID)
+
 # ✅ حساب نسبة النجاح (تقديرية)
 def calculate_success_probability(rsi, bb_signal, ema_signal):
     score = 0
@@ -56,7 +60,6 @@ def analyze_market(symbol):
         bb_upper = max(prices) + 0.002
         bb_lower = min(prices) - 0.002
 
-        # تحليل المؤشرات
         trend = "صاعد ✅" if ema20 > ema50 else "هابط 🔻"
         bb_signal = "أعلى الحد العلوي" if close_price > bb_upper else (
             "أسفل الحد السفلي" if close_price < bb_lower else "محايد")
@@ -113,15 +116,78 @@ async def send_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     await update.callback_query.message.reply_text(message.strip())
 
-# ✅ زر اختيار الأزواج
+# ✅ /start مع حماية الاشتراك
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await update.message.reply_text("❌ لم يتم تفعيل اشتراكك بعد.\n💳 استخدم /buy لشراء الاشتراك.")
+        return
     keyboard = [[InlineKeyboardButton(pair, callback_data=pair)] for pair in PAIRS.keys()]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("👋 مرحباً، اختر زوج التداول لبدء التوصيات:", reply_markup=reply_markup)
 
-# ✅ المعالجة عند اختيار زوج
+# ✅ /pair مع حماية الاشتراك
+async def pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await update.message.reply_text("❌ تحتاج إلى اشتراك مفعل لاستخدام هذا الأمر.\n💳 استخدم /buy.")
+        return
+    keyboard = [[InlineKeyboardButton(pair, callback_data=pair)] for pair in PAIRS.keys()]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🔽 اختر زوج العملات:", reply_markup=reply_markup)
+
+# ✅ /timeframe مع حماية الاشتراك
+async def timeframe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await update.message.reply_text("❌ تحتاج إلى اشتراك مفعل لاستخدام هذا الأمر.\n💳 استخدم /buy.")
+        return
+    keyboard = [
+        [InlineKeyboardButton("1 دقيقة", callback_data="1m")],
+        [InlineKeyboardButton("2 دقيقة", callback_data="2m")],
+        [InlineKeyboardButton("5 دقيقة", callback_data="5m")],
+    ]
+    await update.message.reply_text("🕒 اختر الفريم الزمني:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+# ✅ /buy
+async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""
+💳 لشراء الاشتراك، يرجى إرسال 5 USDT إلى أحد العناوين التالية:
+
+🔗 BEP20: `0x3a5db3aec7c262017af9423219eb64b5eb6643d7`  
+🔗 TRC20: `THrV9BLydZTYKox1MnnAivqitHBEz3xKiq`  
+💼 Payeer: `P1113622813`
+
+بعد الدفع، أرسل لقطة الشاشة إلى المطور ليتم التفعيل يدويًا ✅
+""")
+
+# ✅ /status
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_subscribed(user_id):
+        await update.message.reply_text("✅ اشتراكك مفعل.")
+    else:
+        await update.message.reply_text("❌ لم يتم تفعيل اشتراكك بعد.\n💳 استخدم /buy.")
+
+# ✅ /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""
+ℹ️ أوامر البوت المتاحة:
+/start - بدء البوت
+/buy - شراء الاشتراك
+/pair - اختيار زوج العملات
+/timeframe - اختيار الفريم الزمني
+/status - حالة اشتراكك
+/help - المساعدة والدعم
+""")
+
+# ✅ عند اختيار الزوج
 async def handle_pair_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
+    if not is_subscribed(user_id):
+        await query.message.reply_text("❌ تحتاج إلى اشتراك مفعل.\n💳 استخدم /buy.")
+        return
     await query.answer()
     pair = query.data
     symbol_code = PAIRS[pair]
@@ -130,6 +196,13 @@ async def handle_pair_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ✅ تشغيل البوت
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("buy", buy))
+    app.add_handler(CommandHandler("pair", pair))
+    app.add_handler(CommandHandler("timeframe", timeframe))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(handle_pair_choice))
+
     app.run_polling()
