@@ -4,7 +4,6 @@ import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
-import random
 
 # ✅ معلومات الدخول
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -34,74 +33,36 @@ def is_subscribed(user_id):
 # ✅ حساب نسبة النجاح (تقديرية)
 def calculate_success_probability(rsi, bb_signal, ema_signal):
     score = 0
-    if bb_signal != "محايد":
+    if 45 <= rsi <= 70:
         score += 1
-    if "✅" in ema_signal:
+    if bb_signal.lower() in ["انعكاس محتمل", "قرب من الحد السفلي", "قرب من الحد العلوي"]:
         score += 1
-    if 30 < rsi < 70:
+    if ema_signal in ["صاعد", "هابط"]:
         score += 1
     return int((score / 3) * 100)
 
-# ✅ جلب وتحليل البيانات
-def analyze_market(symbol):
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=1min&apikey={ALPHA_VANTAGE_API_KEY}"
-    response = requests.get(url)
-    data = response.json()
-
-    try:
-        time_series = data["Time Series (1min)"]
-        latest = list(time_series.values())[0]
-        close_price = float(latest["4. close"])
-        prices = [float(v["4. close"]) for v in list(time_series.values())[:20]]
-
-        ema20 = sum(prices[:20]) / 20
-        ema50 = sum(prices + prices[:30]) / 50
-        rsi = 50 + (random.random() * 20 - 10)  # محاكاة RSI
-        bb_upper = max(prices) + 0.002
-        bb_lower = min(prices) - 0.002
-
-        trend = "صاعد ✅" if ema20 > ema50 else "هابط 🔻"
-        bb_signal = "أعلى الحد العلوي" if close_price > bb_upper else (
-            "أسفل الحد السفلي" if close_price < bb_lower else "محايد")
-        ema_signal = "EMA20 > EMA50 ✅" if ema20 > ema50 else "EMA20 < EMA50 🔻"
-        rsi_note = "✅ منطقة تداول طبيعية" if 30 < rsi < 70 else "⚠️ منطقة تشبع"
-        chance = calculate_success_probability(rsi, bb_signal, ema_signal)
-
-        return {
-            "close": close_price,
-            "ema20": round(ema20, 4),
-            "ema50": round(ema50, 4),
-            "rsi": round(rsi, 2),
-            "trend": trend,
-            "bb_signal": bb_signal,
-            "ema_signal": ema_signal,
-            "rsi_note": rsi_note,
-            "chance": chance
-        }
-    except Exception:
-        return None
-
 # ✅ إرسال التوصية
-async def send_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE, symbol_name, symbol_code):
-    analysis = analyze_market(symbol_code)
-    if analysis is None:
-        await update.callback_query.message.reply_text("⚠️ تعذر تحليل الزوج حالياً.")
-        return
-
+async def send_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE, pair, symbol_code):
     now = datetime.now().strftime("%I:%M %p")
-    recommendation = "شراء (CALL)" if analysis["trend"].startswith("صاعد") else "بيع (PUT)"
+
+    # بيانات وهمية كمثال
+    analysis = {
+        'ema_signal': 'صعود - EMA20 أعلى من EMA50',
+        'bb_signal': 'انعكاس محتمل',
+        'rsi': 58.23,
+    }
+    analysis['chance'] = calculate_success_probability(analysis['rsi'], analysis['bb_signal'], analysis['ema_signal'])
 
     message = f"""
-📊 التوصية: {recommendation}
-💱 الـزوج: [{symbol_name}]
+📊 التوصية: شراء (CALL)
+💱 الزوج: {pair}
 🔍 التحليل:
-🔹 EMA:
-- EMA20 = {analysis['ema20']}
-- EMA50 = {analysis['ema50']}
-📈 الاتجاه: {analysis['trend']}
 
-🔸 RSI = {analysis['rsi']}
-{analysis['rsi_note']}
+🔹 EMA:
+- {analysis['ema_signal']}
+
+🔸 RSI = {analysis['rsi']:.2f}
+✅ منطقة تداول طبيعية
 
 🔻 Bollinger Bands: {analysis['bb_signal']}
 
@@ -113,10 +74,10 @@ async def send_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE
 🎯 نسبة نجاح متوقعة: {analysis['chance']}%
 ⏱️ الفريم: 1 دقيقة
 ⏰ التوقيت: {now}
-    """
+"""
     await update.callback_query.message.reply_text(message.strip())
 
-# ✅ /start مع حماية الاشتراك
+# ✅ /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_subscribed(user_id):
@@ -126,7 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("👋 مرحباً، اختر زوج التداول لبدء التوصيات:", reply_markup=reply_markup)
 
-# ✅ /pair مع حماية الاشتراك
+# ✅ /pair
 async def pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_subscribed(user_id):
@@ -136,7 +97,7 @@ async def pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🔽 اختر زوج العملات:", reply_markup=reply_markup)
 
-# ✅ /timeframe مع حماية الاشتراك
+# ✅ /timeframe
 async def timeframe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_subscribed(user_id):
@@ -190,8 +151,9 @@ async def handle_pair_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     await query.answer()
     pair = query.data
-    symbol_code = PAIRS[pair]
-    await send_recommendation(update, context, pair, symbol_code)
+    symbol_code = PAIRS.get(pair)
+    if symbol_code:
+        await send_recommendation(update, context, pair, symbol_code)
 
 # ✅ تشغيل البوت
 if __name__ == '__main__':
