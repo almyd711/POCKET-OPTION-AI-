@@ -1,170 +1,127 @@
 import logging
-import os
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import pandas as pd
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
 
-# ✅ معلومات الدخول
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 6964741705
-ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+# بيانات الدخول
+BOT_TOKEN = '8107272693:AAFp2TOAvUunTaPPiSXHgFSVqrSuIJ5Gc4U'
+ALPHA_VANTAGE_API_KEY = 'W88S5OTAQIAE42AX'
 
-# ✅ إعدادات الأزواج
-PAIRS = {
-    "USD/CHF": "USDCHF",
-    "AUD/USD": "AUDUSD",
-    "USD/JPY": "USDJPY",
-    "USD/CAD": "USDCAD",
-    "EUR/JPY": "EURJPY",
-    "EUR/CAD": "EURCAD",
-    "EUR/USD": "EURUSD",
-    "EUR/CHF": "EURCHF",
-    "EUR/AUD": "EURAUD"
-}
-
-# ✅ إعداد السجل
+# إعدادات اللوغ
 logging.basicConfig(level=logging.INFO)
 
-# ✅ التحقق من الاشتراك
-def is_subscribed(user_id):
-    return str(user_id) == str(ADMIN_ID)
+# --- دالة تحليل البيانات ---
+def analyze_market(data):
+    df = pd.DataFrame(data)
+    df['close'] = pd.to_numeric(df['close'])
 
-# ✅ حساب نسبة النجاح (تقديرية)
-def calculate_success_probability(rsi, bb_signal, ema_signal):
-    score = 0
-    if 45 <= rsi <= 70:
-        score += 1
-    if bb_signal.lower() in ["انعكاس محتمل", "قرب من الحد السفلي", "قرب من الحد العلوي"]:
-        score += 1
-    if ema_signal in ["صاعد", "هابط"]:
-        score += 1
-    return int((score / 3) * 100)
+    # RSI
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    latest_rsi = round(rsi.iloc[-1], 2)
 
-# ✅ إرسال التوصية
-async def send_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE, pair, symbol_code):
+    # EMA 20 و EMA 50
+    ema20 = df['close'].ewm(span=20).mean().iloc[-1]
+    ema50 = df['close'].ewm(span=50).mean().iloc[-1]
+
+    # Bollinger Bands
+    ma = df['close'].rolling(window=20).mean()
+    std = df['close'].rolling(window=20).std()
+    upper_band = ma + (2 * std)
+    lower_band = ma - (2 * std)
+    last_close = df['close'].iloc[-1]
+
+    # تحليل كل مؤشر
+    rsi_analysis = "✅ منطقة تداول طبيعية" if 30 < latest_rsi < 70 else "⚠️ منطقة تشبع"
+    ema_trend = "صاعد ✅" if ema20 > ema50 else "هابط ❌"
+    bb_signal = "أعلى البولينجر" if last_close > upper_band.iloc[-1] else "أسفل البولينجر" if last_close < lower_band.iloc[-1] else "داخل البولينجر"
+
+    # التوصية
+    if ema20 > ema50 and 50 < latest_rsi < 70 and last_close < lower_band.iloc[-1]:
+        recommendation = "شراء (CALL)"
+        chance = 87
+    elif ema20 < ema50 and 30 < latest_rsi < 50 and last_close > upper_band.iloc[-1]:
+        recommendation = "بيع (PUT)"
+        chance = 82
+    else:
+        recommendation = "انتظار"
+        chance = 60
+
     now = datetime.now().strftime("%I:%M %p")
 
-    # بيانات وهمية كمثال
-    analysis = {
-        'ema_signal': 'صعود - EMA20 أعلى من EMA50',
-        'bb_signal': 'انعكاس محتمل',
-        'rsi': 58.23,
-    }
-    analysis['chance'] = calculate_success_probability(analysis['rsi'], analysis['bb_signal'], analysis['ema_signal'])
-
     message = f"""
-📊 التوصية: شراء (CALL)
-💱 الزوج: {pair}
+📊 التوصية: {recommendation}
+💱 الزوج: EUR/USD
 🔍 التحليل:
 
 🔹 EMA:
-- {analysis['ema_signal']}
+- EMA20 = {round(ema20, 4)}
+- EMA50 = {round(ema50, 4)}
+📈 الاتجاه: {ema_trend}
 
-🔸 RSI = {analysis['rsi']:.2f}
-✅ منطقة تداول طبيعية
+🔸 RSI = {latest_rsi}
+{rsi_analysis}
 
-🔻 Bollinger Bands: {analysis['bb_signal']}
+🔻 Bollinger Bands: {bb_signal}
 
 📚 شرح المؤشرات:
-- {analysis['ema_signal']}
-- RSI لتحديد مناطق التشبع
-- Bollinger يعطي احتمالات الانعكاس
+- EMA20 > EMA50 → صعود
+- RSI < 70 → غير مشبع
+- Bollinger → يعطي احتمالات الانعكاس
 
-🎯 نسبة نجاح متوقعة: {analysis['chance']}%
+🎯 نسبة نجاح متوقعة: {chance}%
 ⏱️ الفريم: 1 دقيقة
 ⏰ التوقيت: {now}
-"""
-    await update.callback_query.message.reply_text(message.strip())
+    """
+    return message.strip()
 
-# ✅ /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_subscribed(user_id):
-        await update.message.reply_text("❌ لم يتم تفعيل اشتراكك بعد.\n💳 استخدم /buy لشراء الاشتراك.")
-        return
-    keyboard = [[InlineKeyboardButton(pair, callback_data=pair)] for pair in PAIRS.keys()]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("👋 مرحباً، اختر زوج التداول لبدء التوصيات:", reply_markup=reply_markup)
-
-# ✅ /pair
-async def pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_subscribed(user_id):
-        await update.message.reply_text("❌ تحتاج إلى اشتراك مفعل لاستخدام هذا الأمر.\n💳 استخدم /buy.")
-        return
-    keyboard = [[InlineKeyboardButton(pair, callback_data=pair)] for pair in PAIRS.keys()]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🔽 اختر زوج العملات:", reply_markup=reply_markup)
-
-# ✅ /timeframe
-async def timeframe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_subscribed(user_id):
-        await update.message.reply_text("❌ تحتاج إلى اشتراك مفعل لاستخدام هذا الأمر.\n💳 استخدم /buy.")
-        return
-    keyboard = [
-        [InlineKeyboardButton("1 دقيقة", callback_data="1m")],
-        [InlineKeyboardButton("2 دقيقة", callback_data="2m")],
-        [InlineKeyboardButton("5 دقيقة", callback_data="5m")],
+# --- جلب بيانات السوق من Alpha Vantage ---
+def get_market_data(symbol="EURUSD"):
+    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=compact"
+    response = requests.get(url)
+    data = response.json()
+    if "Time Series FX (1min)" not in data:
+        return None
+    time_series = data["Time Series FX (1min)"]
+    df = [
+        {"time": k, "close": v["4. close"]}
+        for k, v in sorted(time_series.items())
     ]
-    await update.message.reply_text("🕒 اختر الفريم الزمني:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return df
 
-# ✅ /buy
-async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-💳 لشراء الاشتراك، يرجى إرسال 5 USDT إلى أحد العناوين التالية:
-
-🔗 BEP20: `0x3a5db3aec7c262017af9423219eb64b5eb6643d7`  
-🔗 TRC20: `THrV9BLydZTYKox1MnnAivqitHBEz3xKiq`  
-💼 Payeer: `P1113622813`
-
-بعد الدفع، أرسل لقطة الشاشة إلى المطور ليتم التفعيل يدويًا ✅
-""")
-
-# ✅ /status
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_subscribed(user_id):
-        await update.message.reply_text("✅ اشتراكك مفعل.")
-    else:
-        await update.message.reply_text("❌ لم يتم تفعيل اشتراكك بعد.\n💳 استخدم /buy.")
-
-# ✅ /help
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-ℹ️ أوامر البوت المتاحة:
-/start - بدء البوت
-/buy - شراء الاشتراك
-/pair - اختيار زوج العملات
-/timeframe - اختيار الفريم الزمني
-/status - حالة اشتراكك
-/help - المساعدة والدعم
-""")
-
-# ✅ عند اختيار الزوج
-async def handle_pair_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- عند الضغط على زر ---
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = query.from_user.id
-    if not is_subscribed(user_id):
-        await query.message.reply_text("❌ تحتاج إلى اشتراك مفعل.\n💳 استخدم /buy.")
-        return
     await query.answer()
-    pair = query.data
-    symbol_code = PAIRS.get(pair)
-    if symbol_code:
-        await send_recommendation(update, context, pair, symbol_code)
+    symbol = query.data
+    data = get_market_data(symbol)
+    if not data:
+        await query.message.reply_text("فشل في جلب بيانات السوق.")
+        return
+    analysis = analyze_market(data)
+    await query.message.reply_text(analysis)
 
-# ✅ تشغيل البوت
-if __name__ == '__main__':
+# --- /start ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("EUR/USD", callback_data="EURUSD")],
+        [InlineKeyboardButton("USD/JPY", callback_data="USDJPY")],
+        [InlineKeyboardButton("EUR/JPY", callback_data="EURJPY")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("اختر زوج العملة:", reply_markup=reply_markup)
+
+# --- تشغيل البوت ---
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("buy", buy))
-    app.add_handler(CommandHandler("pair", pair))
-    app.add_handler(CommandHandler("timeframe", timeframe))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(handle_pair_choice))
-
+    app.add_handler(CallbackQueryHandler(button))
     app.run_polling()
+
+if __name__ == '__main__':
+    main()
